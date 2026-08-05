@@ -35,9 +35,17 @@ jobs:
 
       # Golden files are part of the contract with the frontend. If they were
       # regenerated without being looked at, the diff shows up here.
+      #
+      # Scoped to the one package that has golden files, not `./...`. -update
+      # is a flag internal/testutil/golden.go defines for its own test binary;
+      # `go test ./... -update` passes it to every package's test binary, and
+      # one that never imports testutil (internal/domain, for instance) has no
+      # idea what -update is and fails immediately with "flag provided but not
+      # defined". This is what a truncated CI log can look like: the failure
+      # reads as a domain test failing, when domain never ran at all.
       - name: Golden files are committed and current
         run: |
-          go test ./... -update
+          go test ./internal/adapter/in/http/... -update
           if ! git diff --quiet -- internal/adapter/in/http/testdata/golden; then
             echo "::error::Golden files differ from the committed ones."
             git diff -- internal/adapter/in/http/testdata/golden
@@ -49,23 +57,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      # Pinned to the last release before Atlas's v0.38 licensing change,
+      # which moved `atlas migrate lint` behind a paid Pro plan (`atlas
+      # login`) in Ariga's official binary. Building the OSS source instead
+      # (`go install ariga.io/atlas/...@latest`) also avoids the paywall, but
+      # atlas pulls in a large dependency tree — cloud SDKs for every driver it
+      # supports — and a cold build took 4+ minutes locally, which is both
+      # slow on every run and more surface for a flaky module-proxy fetch to
+      # fail on. A prebuilt binary of a version that predates the paywall is
+      # faster and just as free. Verified directly: v0.37.0 runs `migrate
+      # lint` clean, no login prompt.
+      #
+      # This pin has a shelf life: Ariga's installer already warns that
+      # v0.37.0 "will soon be deprecated and be unavailable for download."
+      # When that happens this step starts failing on the download itself,
+      # not on a paywall — a different, easier-to-diagnose failure. At that
+      # point the fix is either a newer pre-Pro version if one exists, or
+      # accepting the ~5 min go-install-from-source build as the cost of
+      # keeping this check free.
+      - uses: ariga/setup-atlas@v0
         with:
-          go-version-file: go.mod
-          cache: true
-
-      # NOT `ariga/setup-atlas`: that action installs Ariga's official
-      # binary, and since v0.38 `atlas migrate lint` aborts there unless
-      # `atlas login` has been run against a paid Pro plan. The lint code
-      # itself is still Apache-2 licensed — building it from source (what
-      # `go install` does here) is the OSS build, and the command runs with
-      # no login and no subscription. This is why the exact same command
-      # passed in local testing and failed here: the two were different
-      # binaries of the same open-source command.
-      - name: Install atlas (built from source, not the licensed binary)
-        run: |
-          go install ariga.io/atlas/cmd/atlas@latest
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          version: v0.37.0
 
       # Catches a generated migration that would drop a column or rewrite a
       # table — which on SQLite means a full table rebuild (01-structure.md §1.8).
