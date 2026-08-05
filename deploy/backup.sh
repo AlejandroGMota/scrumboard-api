@@ -7,7 +7,13 @@
 #   sudo mkdir -p /var/backups/scrumboard
 #   sudo chown 65534:65534 /var/backups/scrumboard   # the container's user
 #   crontab -e
-#     17 3 * * *  /home/ubuntu/scrumboard-api/backup.sh >> /var/log/scrumboard-backup.log 2>&1
+#     PATH=/usr/local/bin:/usr/bin:/bin
+#     17 3 * * *  CONTAINER=scrumboard-api BACKUP_DIR=/var/backups/scrumboard \
+#       /home/ubuntu/scrumboard-api/backup.sh >> /var/log/scrumboard-backup.log 2>&1
+#
+# The PATH line is not decoration: cron's default PATH does not include
+# /usr/local/bin, which is where rclone installs. Without it the off-VM copy
+# silently takes the "no rclone configured" branch every night.
 #
 # The offline write queue is what raises the stakes here (00-scope.md §6.4): a
 # lost volume is no longer "I will rebuild the board", it is changes that
