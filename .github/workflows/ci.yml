@@ -49,7 +49,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: ariga/setup-atlas@v0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # NOT `ariga/setup-atlas`: that action installs Ariga's official
+      # binary, and since v0.38 `atlas migrate lint` aborts there unless
+      # `atlas login` has been run against a paid Pro plan. The lint code
+      # itself is still Apache-2 licensed — building it from source (what
+      # `go install` does here) is the OSS build, and the command runs with
+      # no login and no subscription. This is why the exact same command
+      # passed in local testing and failed here: the two were different
+      # binaries of the same open-source command.
+      - name: Install atlas (built from source, not the licensed binary)
+        run: |
+          go install ariga.io/atlas/cmd/atlas@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       # Catches a generated migration that would drop a column or rewrite a
       # table — which on SQLite means a full table rebuild (01-structure.md §1.8).
