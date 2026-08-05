@@ -1,0 +1,19 @@
+# Build output
+bin/
+tmp/
+
+# Local development database
+*.db
+*.db-wal
+*.db-shm
+
+# Coverage
+cover.out
+cover.html
+
+# Secrets and machine-specific settings. This repository is public: a token
+# committed here stays in the history forever, and rotating it is the only
+# remedy (00-scope.md §7).
+.env
+.env.local
+.env.*.local

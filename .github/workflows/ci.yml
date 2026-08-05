@@ -1,0 +1,80 @@
+name: CI
+
+# Every push and every pull request, not only main. CI that runs after the
+# merge has stopped serving the one purpose it has (02-testing.md §8.2).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs the history to scan it, not just the tip.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Test with the race detector
+        run: go test -race -coverprofile=cover.out ./...
+
+      - name: Build
+        run: go build ./...
+
+      # Golden files are part of the contract with the frontend. If they were
+      # regenerated without being looked at, the diff shows up here.
+      - name: Golden files are committed and current
+        run: |
+          go test ./... -update
+          if ! git diff --quiet -- internal/adapter/in/http/testdata/golden; then
+            echo "::error::Golden files differ from the committed ones."
+            git diff -- internal/adapter/in/http/testdata/golden
+            exit 1
+          fi
+
+  migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ariga/setup-atlas@v0
+
+      # Catches a generated migration that would drop a column or rewrite a
+      # table — which on SQLite means a full table rebuild (01-structure.md §1.8).
+      - name: Lint the newest migration
+        run: atlas migrate lint --env local --latest 1
+
+      # Catches a schema.sql edited without regenerating the migration.
+      # `atlas migrate diff` has no dry-run flag — it always writes a file —
+      # so the check is `atlas schema diff` against the replayed migrations,
+      # which is read-only. Delegated to `make` so the same logic that runs
+      # here is what a developer runs locally, rather than a second copy that
+      # can drift from it.
+      - name: schema.sql and migrations/ agree
+        run: make schema-check
+
+  secrets:
+    # This repository is public. A token committed here stays in the history
+    # forever, and rotating it is the only remedy — three lines of workflow
+    # against a mistake that is otherwise unrecoverable (00-scope.md §7).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

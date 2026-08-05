@@ -1,0 +1,54 @@
+# Deployed to ~/scrumboard-api/ on the VM.
+#
+# This file is PUBLIC. Every value that matters comes from ~/scrumboard-api/.env
+# on the VM, which is not in git and never passes through GitHub.
+#
+#   docker compose --env-file .env up -d --remove-orphans
+
+services:
+  api:
+    image: ghcr.io/alejandrogmota/scrumboard-api:latest
+    container_name: scrumboard-api
+    restart: unless-stopped
+
+    # Bound to localhost: nginx on the host is the only thing that reaches it,
+    # and it is what adds TLS and basic auth. Published on 0.0.0.0 this would
+    # be an unauthenticated board on the public internet, one layer short.
+    ports:
+      - "127.0.0.1:8020:8080"
+
+    environment:
+      SCRUMBOARD_TOKEN: ${SCRUMBOARD_TOKEN:?set it in .env}
+      DB_PATH: /data/scrumboard.db
+      CORS_ORIGIN: https://scrumboard.alejandrogmota.com
+
+    volumes:
+      - sqlite_data:/data
+      # Where backup.sh writes the nightly snapshot. A bind mount rather than
+      # a volume, because the point is for it to be somewhere the host can
+      # copy off the machine. The image runs as 65534, so:
+      #   sudo mkdir -p /var/backups/scrumboard
+      #   sudo chown 65534:65534 /var/backups/scrumboard
+      - ${BACKUP_DIR:-/var/backups/scrumboard}:/backups
+
+    # The health check is what tells the difference between "the process
+    # started" and "the process can reach its database" (02-testing.md §4.1).
+    # The image is scratch: no shell, no curl, so the binary checks itself.
+    healthcheck:
+      test: ["CMD", "/api", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  sqlite_data:
+    # This volume is the board. `docker compose down -v` deletes it.
+    # The nightly backup (backup.sh) is what makes that survivable.
+    name: scrumboard_sqlite_data

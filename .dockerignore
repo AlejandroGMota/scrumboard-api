@@ -1,0 +1,16 @@
+# Everything the build does not need, and a few things it must never get.
+.git
+.github
+bin/
+tmp/
+docs/
+deploy/
+*.db
+*.db-wal
+*.db-shm
+cover.out
+cover.html
+.env
+.env.local
+Makefile
+README.md
