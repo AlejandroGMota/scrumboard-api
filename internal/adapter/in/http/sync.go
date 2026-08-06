@@ -65,11 +65,12 @@ func toOperation(o operationRequest) (domain.Operation, error) {
 
 	case domain.OpBoardUpdate:
 		var p struct {
-			ID   string  `json:"id"`
-			Name *string `json:"name"`
+			ID         string             `json:"id"`
+			Name       *string            `json:"name"`
+			LabelNames *map[string]string `json:"label_names"`
 		}
 		if err = decodePayload(o.Payload, &p); err == nil {
-			op.Payload = domain.BoardUpdatePayload{ID: p.ID, Name: p.Name}
+			op.Payload = domain.BoardUpdatePayload{ID: p.ID, Name: p.Name, LabelNames: p.LabelNames}
 		}
 
 	case domain.OpBoardDelete:

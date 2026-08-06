@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/alejandrogmota/scrumboard-api/internal/domain"
@@ -234,6 +235,99 @@ func TestUpdateBoard(t *testing.T) {
 			ExpectStatus(http.StatusNotFound)
 	})
 
+	t.Run("names a colour and reads it back on both list and nested reads", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]string{"blue": "Admin", "purple": "Xeleva"},
+		}).ExpectStatus(http.StatusOK)
+
+		var nested struct {
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).JSON(&nested)
+		if nested.LabelNames["blue"] != "Admin" || nested.LabelNames["purple"] != "Xeleva" {
+			t.Errorf("nested LabelNames = %+v, want blue=Admin purple=Xeleva", nested.LabelNames)
+		}
+
+		var list []struct {
+			ID         string            `json:"id"`
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards").JSON(&list)
+		for _, b := range list {
+			if b.ID == board.ID {
+				if b.LabelNames["blue"] != "Admin" {
+					t.Errorf("list LabelNames = %+v, want blue=Admin", b.LabelNames)
+				}
+				return
+			}
+		}
+		t.Fatal("board missing from the list")
+	})
+
+	t.Run("a board with no legend reports an empty object, never null", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+
+		var read struct {
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).JSON(&read)
+		if read.LabelNames == nil {
+			t.Error("LabelNames = nil, want an empty object: the frontend indexes this with no guard")
+		}
+	})
+
+	t.Run("naming an unknown colour is a 400 and changes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]string{"turquoise": "x"},
+		}).ExpectStatus(http.StatusBadRequest)
+
+		var read struct {
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).JSON(&read)
+		if len(read.LabelNames) != 0 {
+			t.Errorf("LabelNames = %+v, want the refused update to have changed nothing", read.LabelNames)
+		}
+	})
+
+	t.Run("renaming the board leaves an existing legend alone", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]string{"blue": "Admin"},
+		}).ExpectStatus(http.StatusOK)
+
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{"name": "Personal"}).
+			ExpectStatus(http.StatusOK)
+
+		var read struct {
+			Name       string            `json:"name"`
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).JSON(&read)
+		if read.Name != "Personal" {
+			t.Errorf("Name = %q, want Personal", read.Name)
+		}
+		if read.LabelNames["blue"] != "Admin" {
+			t.Errorf("a rename with no label_names field must not touch the legend, got %+v", read.LabelNames)
+		}
+	})
+
 	t.Run("C7: renaming to the same name is a 200 with no event", func(t *testing.T) {
 		t.Parallel()
 
@@ -246,6 +340,73 @@ func TestUpdateBoard(t *testing.T) {
 
 		if n := len(env.Events.Events()); n != 0 {
 			t.Errorf("%d events published, want 0: a no-op update must not wake the other devices", n)
+		}
+	})
+
+	// The legend panel saves on close, so re-sending an unchanged legend is
+	// the common case, not the rare one. It must cost nothing.
+	t.Run("C7: re-sending the same legend is a 200 with no event", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+		legend := map[string]any{"label_names": map[string]string{"blue": "Admin"}}
+
+		env.Client.PATCH("/api/boards/"+board.ID, legend).ExpectStatus(http.StatusOK)
+		env.Events.Reset()
+
+		env.Client.PATCH("/api/boards/"+board.ID, legend).ExpectStatus(http.StatusOK)
+
+		if n := len(env.Events.Events()); n != 0 {
+			t.Errorf("%d events published, want 0: closing the legend panel unchanged must be free", n)
+		}
+	})
+
+	t.Run("C4: a meaning past the length limit is a 400 and changes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]string{"blue": "Admin"},
+		}).ExpectStatus(http.StatusOK)
+		env.Events.Reset()
+
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]string{"blue": strings.Repeat("x", 33)},
+		}).ExpectStatus(http.StatusBadRequest)
+
+		var read struct {
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).JSON(&read)
+		if read.LabelNames["blue"] != "Admin" {
+			t.Errorf("legend = %+v, want the rejected edit to have changed nothing", read.LabelNames)
+		}
+		if n := len(env.Events.Events()); n != 0 {
+			t.Errorf("%d events published, want 0 on a rejected update", n)
+		}
+	})
+
+	t.Run("an empty object clears the whole legend", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]string{"blue": "Admin", "red": "Blocked"},
+		}).ExpectStatus(http.StatusOK)
+
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]string{},
+		}).ExpectStatus(http.StatusOK)
+
+		var read struct {
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).JSON(&read)
+		if len(read.LabelNames) != 0 {
+			t.Errorf("legend = %+v, want it cleared", read.LabelNames)
 		}
 	})
 }

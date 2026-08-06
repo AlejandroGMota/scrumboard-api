@@ -20,7 +20,10 @@ type CreateBoardCmd struct {
 type UpdateBoardCmd struct {
 	ID   string
 	Name *string
-	OpID string
+	// LabelNames replaces the board's legend when non-nil. nil means "leave
+	// it alone", so renaming a board does not silently wipe its meanings.
+	LabelNames *map[string]string
+	OpID       string
 }
 
 type DeleteBoardCmd struct {

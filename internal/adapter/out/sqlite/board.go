@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -15,12 +16,17 @@ type BoardRepo struct{ d *DB }
 
 var _ port.BoardRepository = (*BoardRepo)(nil)
 
-const boardColumns = "id, name, created_at, updated_at, deleted_at"
+const boardColumns = "id, name, created_at, updated_at, deleted_at, label_names"
 
 func (r *BoardRepo) Create(ctx context.Context, b *domain.Board) error {
-	_, err := r.d.q(ctx).ExecContext(ctx,
-		`INSERT INTO boards (id, name, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?)`,
-		b.ID, b.Name, formatTime(b.CreatedAt), formatTime(b.UpdatedAt), nullTime(b.DeletedAt),
+	names, err := encodeLabelNames(b.LabelNames)
+	if err != nil {
+		return err
+	}
+	_, err = r.d.q(ctx).ExecContext(ctx,
+		`INSERT INTO boards (id, name, created_at, updated_at, deleted_at, label_names)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		b.ID, b.Name, formatTime(b.CreatedAt), formatTime(b.UpdatedAt), nullTime(b.DeletedAt), names,
 	)
 	if err != nil {
 		return fmt.Errorf("insert board: %w", err)
@@ -119,9 +125,13 @@ func (r *BoardRepo) GetWithChildren(ctx context.Context, id string) (*domain.Boa
 }
 
 func (r *BoardRepo) Update(ctx context.Context, b *domain.Board) error {
+	names, err := encodeLabelNames(b.LabelNames)
+	if err != nil {
+		return err
+	}
 	res, err := r.d.q(ctx).ExecContext(ctx,
-		`UPDATE boards SET name = ?, updated_at = ?, deleted_at = ? WHERE id = ?`,
-		b.Name, formatTime(b.UpdatedAt), nullTime(b.DeletedAt), b.ID,
+		`UPDATE boards SET name = ?, updated_at = ?, deleted_at = ?, label_names = ? WHERE id = ?`,
+		b.Name, formatTime(b.UpdatedAt), nullTime(b.DeletedAt), names, b.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update board: %w", err)
@@ -157,18 +167,47 @@ func (r *BoardRepo) SoftDelete(ctx context.Context, id string, at time.Time) err
 
 type scanner interface{ Scan(dest ...any) error }
 
+// The legend is stored as a JSON object keyed by colour. nil and an empty map
+// both round-trip to "{}", so a board with no legend reads back as an empty
+// map rather than nil — callers never have to nil-check it.
+func encodeLabelNames(names map[string]string) (string, error) {
+	if len(names) == 0 {
+		return "{}", nil
+	}
+	raw, err := json.Marshal(names)
+	if err != nil {
+		return "", fmt.Errorf("encode label names: %w", err)
+	}
+	return string(raw), nil
+}
+
+func decodeLabelNames(col sql.NullString) (map[string]string, error) {
+	out := map[string]string{}
+	if !col.Valid || col.String == "" || col.String == "{}" {
+		return out, nil
+	}
+	if err := json.Unmarshal([]byte(col.String), &out); err != nil {
+		return nil, fmt.Errorf("decode label names: %w", err)
+	}
+	return out, nil
+}
+
 func scanBoard(s scanner) (*domain.Board, error) {
 	var (
-		b         domain.Board
-		created   string
-		updated   string
-		deletedAt sql.NullString
+		b          domain.Board
+		created    string
+		updated    string
+		deletedAt  sql.NullString
+		labelNames sql.NullString
 	)
-	if err := s.Scan(&b.ID, &b.Name, &created, &updated, &deletedAt); err != nil {
+	if err := s.Scan(&b.ID, &b.Name, &created, &updated, &deletedAt, &labelNames); err != nil {
 		return nil, err
 	}
 
 	var err error
+	if b.LabelNames, err = decodeLabelNames(labelNames); err != nil {
+		return nil, err
+	}
 	if b.CreatedAt, err = parseTime(created); err != nil {
 		return nil, err
 	}

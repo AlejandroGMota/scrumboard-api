@@ -64,12 +64,22 @@ func (s *Board) Update(ctx context.Context, cmd port.UpdateBoardCmd) (*domain.Bo
 	if err != nil {
 		return nil, err
 	}
-	if cmd.Name == nil {
-		return b, nil
+	now := s.d.Clock.Now()
+	changed := false
+
+	if cmd.Name != nil {
+		renamed, err := b.Rename(*cmd.Name, now)
+		if err != nil {
+			return nil, err
+		}
+		changed = changed || renamed
 	}
-	changed, err := b.Rename(*cmd.Name, s.d.Clock.Now())
-	if err != nil {
-		return nil, err
+	if cmd.LabelNames != nil {
+		relabelled, err := b.SetLabelNames(*cmd.LabelNames, now)
+		if err != nil {
+			return nil, err
+		}
+		changed = changed || relabelled
 	}
 	if !changed {
 		return b, nil

@@ -13,7 +13,11 @@ CREATE TABLE boards (
   name       TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  deleted_at TEXT
+  deleted_at TEXT,
+  -- What each palette colour means on this board, as a JSON object keyed by
+  -- colour. Bounded (six short strings), always read and written with the
+  -- board, so a table would cost a join and buy nothing.
+  label_names TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE columns (

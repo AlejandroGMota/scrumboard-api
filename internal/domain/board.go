@@ -19,9 +19,66 @@ type Board struct {
 	UpdatedAt time.Time
 	DeletedAt *time.Time
 
+	// LabelNames gives the six palette colours a meaning, per board: what
+	// "blue" stands for on THIS board. Keyed by the colour, so an unnamed
+	// colour is simply absent rather than an empty string.
+	//
+	// It lives on the board rather than globally because the vocabulary is
+	// the board's: a life board's blue is an area of life, a project board's
+	// blue is a kind of work, and nothing useful is served by forcing them to
+	// agree.
+	LabelNames map[string]string
+
 	// Columns is populated only by the read that paints the screen
 	// (GET /api/boards/{id}). Every other read leaves it nil.
 	Columns []Column
+}
+
+// MaxLabelNameLength bounds one meaning. A legend is a glance, not a note.
+const MaxLabelNameLength = 32
+
+// SetLabelNames replaces the whole legend, validating every entry.
+//
+// Replace rather than merge: a legend is small and always edited as a whole,
+// and merging would make "remove this meaning" impossible to express.
+func (b *Board) SetLabelNames(names map[string]string, now time.Time) (bool, error) {
+	cleaned := map[string]string{}
+	for colour, meaning := range names {
+		if err := ValidLabel(colour); err != nil {
+			return false, err
+		}
+		if colour == LabelNone {
+			return false, Invalid("label_names", "the empty label cannot be named")
+		}
+		meaning = strings.TrimSpace(meaning)
+		if meaning == "" {
+			// An empty meaning is how a colour goes back to being unnamed.
+			continue
+		}
+		if len([]rune(meaning)) > MaxLabelNameLength {
+			return false, Invalid("label_names", "each meaning must be at most 32 characters")
+		}
+		cleaned[colour] = meaning
+	}
+
+	if sameNames(b.LabelNames, cleaned) {
+		return false, nil
+	}
+	b.LabelNames = cleaned
+	b.UpdatedAt = now
+	return true, nil
+}
+
+func sameNames(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // NewBoard validates and builds a board. The id comes from the caller because

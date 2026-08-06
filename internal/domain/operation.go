@@ -57,6 +57,10 @@ type (
 	BoardUpdatePayload struct {
 		ID   string
 		Name *string
+		// LabelNames mirrors UpdateBoardCmd: nil means "leave the legend
+		// alone". Without it here, a legend edited offline would reach the
+		// server inside a valid operation and be dropped without a word.
+		LabelNames *map[string]string
 	}
 	BoardDeletePayload struct {
 		ID string
