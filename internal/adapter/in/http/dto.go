@@ -21,10 +21,13 @@ import (
 // makes "this response nests its children" a decision rather than an accident.
 
 type boardDTO struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// What each palette colour means on this board. Always an object, never
+	// null, so the frontend can index it without a guard.
+	LabelNames map[string]string `json:"label_names"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
 }
 
 // nestedBoardDTO is what GET /api/boards/{id} returns: the whole screen.
@@ -61,11 +64,16 @@ type cardDTO struct {
 }
 
 func toBoard(b *domain.Board) boardDTO {
+	names := b.LabelNames
+	if names == nil {
+		names = map[string]string{}
+	}
 	return boardDTO{
-		ID:        b.ID,
-		Name:      b.Name,
-		CreatedAt: b.CreatedAt,
-		UpdatedAt: b.UpdatedAt,
+		ID:         b.ID,
+		Name:       b.Name,
+		LabelNames: names,
+		CreatedAt:  b.CreatedAt,
+		UpdatedAt:  b.UpdatedAt,
 	}
 }
 
@@ -144,7 +152,8 @@ type createBoardRequest struct {
 }
 
 type updateBoardRequest struct {
-	Name *string `json:"name"`
+	Name       *string            `json:"name"`
+	LabelNames *map[string]string `json:"label_names"`
 }
 
 type createColumnRequest struct {

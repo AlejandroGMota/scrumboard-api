@@ -67,9 +67,10 @@ func (s *Server) updateBoard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	board, err := s.deps.Boards.Update(r.Context(), port.UpdateBoardCmd{
-		ID:   r.PathValue("id"),
-		Name: body.Name,
-		OpID: opID(r),
+		ID:         r.PathValue("id"),
+		Name:       body.Name,
+		LabelNames: body.LabelNames,
+		OpID:       opID(r),
 	})
 	if err != nil {
 		s.writeError(w, r, err)

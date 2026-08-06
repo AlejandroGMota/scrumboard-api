@@ -248,6 +248,95 @@ func TestSyncConflictResolution(t *testing.T) {
 	})
 }
 
+// A legend edited offline has to survive the queue. The payload decoder only
+// carried `name` at first, so a board.update carrying label_names arrived as a
+// perfectly valid operation, reported "applied", and changed nothing — the
+// silent failure the sync design exists to prevent.
+func TestSyncCarriesTheLegend(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a legend edited offline is applied", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+
+		results := postBatch(t, env, batch(
+			op("op-1", "board.update", env.Clock.Now(), map[string]any{
+				"id":          board.ID,
+				"label_names": map[string]any{"blue": "Admin", "red": "Blocked"},
+			}),
+		))
+
+		if results[0].Status != "applied" {
+			t.Fatalf("status = %q, want applied\nresult: %+v", results[0].Status, results[0])
+		}
+
+		var got struct {
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).ExpectStatus(http.StatusOK).JSON(&got)
+
+		want := map[string]string{"blue": "Admin", "red": "Blocked"}
+		if diff := cmp.Diff(want, got.LabelNames); diff != "" {
+			t.Errorf("legend mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("renaming a board offline leaves the legend alone", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+		env.Client.PATCH("/api/boards/"+board.ID, map[string]any{
+			"label_names": map[string]any{"green": "Done"},
+		}).ExpectStatus(http.StatusOK)
+
+		results := postBatch(t, env, batch(
+			op("op-1", "board.update", env.Clock.Now().Add(time.Second),
+				map[string]any{"id": board.ID, "name": "Renamed"}),
+		))
+
+		if results[0].Status != "applied" {
+			t.Fatalf("status = %q, want applied", results[0].Status)
+		}
+
+		var got struct {
+			Name       string            `json:"name"`
+			LabelNames map[string]string `json:"label_names"`
+		}
+		env.Client.GET("/api/boards/" + board.ID).ExpectStatus(http.StatusOK).JSON(&got)
+
+		if got.Name != "Renamed" {
+			t.Errorf("name = %q, want Renamed", got.Name)
+		}
+		if diff := cmp.Diff(map[string]string{"green": "Done"}, got.LabelNames); diff != "" {
+			t.Errorf("a rename must not wipe the legend (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("an invalid meaning fails the operation, not the batch", func(t *testing.T) {
+		t.Parallel()
+
+		env := testutil.NewEnv(t)
+		board := env.SeedBoard(t)
+
+		results := postBatch(t, env, batch(
+			op("op-1", "board.update", env.Clock.Now(), map[string]any{
+				"id":          board.ID,
+				"label_names": map[string]any{"chartreuse": "Nope"},
+			}),
+			op("op-2", "board.update", env.Clock.Now(), map[string]any{
+				"id": board.ID, "name": "Still renamed",
+			}),
+		))
+
+		if diff := cmp.Diff([]string{"failed", "applied"}, statusesOf(results)); diff != "" {
+			t.Fatalf("statuses mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
 func TestSyncOnADeletedCardDoesNotResurrectIt(t *testing.T) {
 	t.Parallel()
 

@@ -123,3 +123,98 @@ func TestFieldErrorCarriesTheField(t *testing.T) {
 		t.Error("a FieldError must also satisfy errors.Is(err, ErrInvalid)")
 	}
 }
+
+func TestSetLabelNames(t *testing.T) {
+	t.Parallel()
+
+	later := t0.Add(5 * time.Second)
+
+	t.Run("names a colour and stamps the update", func(t *testing.T) {
+		t.Parallel()
+
+		b, _ := domain.NewBoard("b1", "Work", t0)
+		changed, err := b.SetLabelNames(map[string]string{"blue": "Admin"}, later)
+		if err != nil || !changed {
+			t.Fatalf("SetLabelNames() = %v, %v; want true, nil", changed, err)
+		}
+		if b.LabelNames["blue"] != "Admin" {
+			t.Errorf("LabelNames[blue] = %q, want Admin", b.LabelNames["blue"])
+		}
+		if !b.UpdatedAt.Equal(later) {
+			t.Errorf("UpdatedAt = %v, want %v", b.UpdatedAt, later)
+		}
+	})
+
+	t.Run("the same legend changes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		b, _ := domain.NewBoard("b1", "Work", t0)
+		b.SetLabelNames(map[string]string{"blue": "Admin"}, later)
+
+		changed, err := b.SetLabelNames(map[string]string{"blue": "Admin"}, later.Add(time.Second))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if changed {
+			t.Error("changed = true, want false: an identical legend must not touch updated_at")
+		}
+		if !b.UpdatedAt.Equal(later) {
+			t.Errorf("UpdatedAt = %v, want it untouched at %v", b.UpdatedAt, later)
+		}
+	})
+
+	t.Run("an empty meaning un-names the colour", func(t *testing.T) {
+		t.Parallel()
+
+		b, _ := domain.NewBoard("b1", "Work", t0)
+		b.SetLabelNames(map[string]string{"blue": "Admin"}, later)
+
+		changed, err := b.SetLabelNames(map[string]string{"blue": "  "}, later.Add(time.Second))
+		if err != nil || !changed {
+			t.Fatalf("SetLabelNames() = %v, %v; want true, nil", changed, err)
+		}
+		if _, named := b.LabelNames["blue"]; named {
+			t.Error("blue is still named; an empty meaning must remove it")
+		}
+	})
+
+	t.Run("replaces the whole legend rather than merging", func(t *testing.T) {
+		t.Parallel()
+
+		b, _ := domain.NewBoard("b1", "Work", t0)
+		b.SetLabelNames(map[string]string{"blue": "Admin", "red": "Urgent"}, later)
+
+		b.SetLabelNames(map[string]string{"blue": "Admin"}, later.Add(time.Second))
+		if _, named := b.LabelNames["red"]; named {
+			t.Error("red survived a legend that did not mention it; replace must drop it")
+		}
+	})
+
+	t.Run("an unknown colour is refused", func(t *testing.T) {
+		t.Parallel()
+
+		b, _ := domain.NewBoard("b1", "Work", t0)
+		if _, err := b.SetLabelNames(map[string]string{"turquoise": "x"}, later); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("err = %v, want %v", err, domain.ErrInvalid)
+		}
+	})
+
+	t.Run("naming the empty label is refused", func(t *testing.T) {
+		t.Parallel()
+
+		b, _ := domain.NewBoard("b1", "Work", t0)
+		if _, err := b.SetLabelNames(map[string]string{domain.LabelNone: "x"}, later); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("err = %v, want %v", err, domain.ErrInvalid)
+		}
+	})
+
+	t.Run("a meaning over the length limit is refused", func(t *testing.T) {
+		t.Parallel()
+
+		b, _ := domain.NewBoard("b1", "Work", t0)
+		long := strings.Repeat("x", domain.MaxLabelNameLength+1)
+		if _, err := b.SetLabelNames(map[string]string{"blue": long}, later); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("err = %v, want %v", err, domain.ErrInvalid)
+		}
+	})
+}

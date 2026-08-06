@@ -223,7 +223,9 @@ func (s *batch) dispatch(ctx context.Context, op domain.Operation) (any, error) 
 		return b, err
 
 	case domain.BoardUpdatePayload:
-		b, err := s.boards.Update(ctx, port.UpdateBoardCmd{ID: p.ID, Name: p.Name, OpID: op.OpID})
+		b, err := s.boards.Update(ctx, port.UpdateBoardCmd{
+			ID: p.ID, Name: p.Name, LabelNames: p.LabelNames, OpID: op.OpID,
+		})
 		return b, err
 
 	case domain.BoardDeletePayload:
