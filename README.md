@@ -146,3 +146,18 @@ that knows HTTP, SQL and WebSockets exist.
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+## MCP server for Claude
+
+`cmd/mcp` is a stdio MCP server that wraps this API, so Claude can list boards,
+read them, and create, edit, move and delete cards. Stdlib only, one binary.
+
+```sh
+go build -o ~/bin/scrumboard-mcp ./cmd/mcp
+claude mcp add scrumboard --scope user \
+  -e SCRUMBOARD_URL=https://scrumboard.alejandrogmota.com \
+  -e SCRUMBOARD_TOKEN=<token> -- ~/bin/scrumboard-mcp
+```
+
+Tools: `list_boards`, `get_board`, `list_labels`, `create_card`, `update_card`,
+`move_card`, `delete_card`.

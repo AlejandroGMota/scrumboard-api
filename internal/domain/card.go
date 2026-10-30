@@ -1,16 +1,17 @@
 package domain
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
 
 const (
 	// MaxTitleLength bounds a card title. Same reasoning as MaxNameLength.
-	MaxTitleLength = 200
+	MaxTitleLength = 500
 	// MaxDescriptionLength bounds the description. Plain text in v1
 	// (00-scope.md §11): markdown means a renderer, sanitising and an editor.
-	MaxDescriptionLength = 4000
+	MaxDescriptionLength = 50000
 )
 
 // Labels is the fixed palette (00-scope.md §11 question 2). Free-text hex
@@ -138,14 +139,14 @@ func validTitle(title string) (string, error) {
 		return "", Invalid("title", "must not be empty")
 	}
 	if len([]rune(title)) > MaxTitleLength {
-		return "", Invalid("title", "must be at most 200 characters")
+		return "", Invalid("title", fmt.Sprintf("must be at most %d characters", MaxTitleLength))
 	}
 	return title, nil
 }
 
 func validDescription(d string) error {
 	if len([]rune(d)) > MaxDescriptionLength {
-		return Invalid("description", "must be at most 4000 characters")
+		return Invalid("description", fmt.Sprintf("must be at most %d characters", MaxDescriptionLength))
 	}
 	return nil
 }

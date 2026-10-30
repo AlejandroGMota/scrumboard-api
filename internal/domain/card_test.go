@@ -27,8 +27,8 @@ func TestNewCard(t *testing.T) {
 		{name: "no label is valid", title: "Write", label: "", wantTitle: "Write"},
 		{name: "empty title", title: "", wantErr: domain.ErrInvalid},
 		{name: "whitespace-only title", title: "   \t ", wantErr: domain.ErrInvalid},
-		{name: "title too long", title: strings.Repeat("a", 201), wantErr: domain.ErrInvalid},
-		{name: "description too long", title: "Write", desc: strings.Repeat("a", 4001), wantErr: domain.ErrInvalid},
+		{name: "title too long", title: strings.Repeat("a", domain.MaxTitleLength+1), wantErr: domain.ErrInvalid},
+		{name: "description too long", title: "Write", desc: strings.Repeat("a", domain.MaxDescriptionLength+1), wantErr: domain.ErrInvalid},
 		{name: "unknown label", title: "Write", label: "chartreuse", wantErr: domain.ErrInvalid},
 		{name: "label with the wrong case", title: "Write", label: "Blue", wantErr: domain.ErrInvalid},
 	}
