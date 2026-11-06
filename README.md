@@ -118,6 +118,12 @@ make backup         # run it now
 make restore-check  # pull the newest backup and actually open it
 ```
 
+Backups are encrypted with [age](https://age-encryption.org) before they are
+kept or copied: the VM holds only the public key
+(`~/scrumboard-api/backup-recipient.txt`) and refuses to back up without it.
+The private key lives in the password manager; `restore-check` reads it from
+`~/.config/age/scrumboard-backup.key`. Losing it makes every backup unreadable.
+
 A backup nobody has restored is a hypothesis.
 
 ## Layout

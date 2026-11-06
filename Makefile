@@ -18,6 +18,7 @@ export
 VM_USER ?= ubuntu
 VM_KEY  := $(HOME)/.ssh/oracle_chavarria_vm
 VM_DIR  := ~/scrumboard-api
+AGE_KEY ?= $(HOME)/.config/age/scrumboard-backup.key
 
 IMAGE := ghcr.io/alejandrogmota/scrumboard-api
 
@@ -144,14 +145,16 @@ backup: require-host ## Run the nightly backup now
 	ssh -i $(VM_KEY) $(VM_USER)@$(VM_HOST) "$(VM_DIR)/backup.sh"
 
 .PHONY: restore-check
-restore-check: require-host ## Pull the newest backup and run PRAGMA integrity_check on it
+restore-check: require-host ## Pull the newest backup, decrypt it and run PRAGMA integrity_check on it
 	@echo "A backup nobody has restored is a hypothesis, not a backup."
+	@test -s $(AGE_KEY) || { echo "no private key at $(AGE_KEY) (it lives in the password manager)"; exit 1; }
 	mkdir -p tmp
 	@latest=$$(ssh -i $(VM_KEY) $(VM_USER)@$(VM_HOST) \
-		"ls -t /var/backups/scrumboard/scrumboard-*.db 2>/dev/null | head -1"); \
+		"ls -t /var/backups/scrumboard/scrumboard-*.db.age 2>/dev/null | head -1"); \
 	test -n "$$latest" || { echo "no backups on the VM yet"; exit 1; }; \
 	echo "newest backup: $$latest"; \
-	scp -i $(VM_KEY) $(VM_USER)@$(VM_HOST):$$latest tmp/restore-check.db
+	scp -i $(VM_KEY) $(VM_USER)@$(VM_HOST):$$latest tmp/restore-check.db.age
+	age -d -i $(AGE_KEY) -o tmp/restore-check.db tmp/restore-check.db.age
 	go run ./cmd/api -verify tmp/restore-check.db
 
 .PHONY: deploy
