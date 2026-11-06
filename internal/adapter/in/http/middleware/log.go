@@ -14,7 +14,13 @@ import (
 // slog in JSON to stdout, read with `docker compose logs` (00-scope.md §11
 // question 6). No log stack: one user does not generate enough lines to need
 // somewhere to put them.
-func Log(logger *slog.Logger) func(http.Handler) http.Handler {
+//
+// redact rewrites the path before it is logged. It exists for the routes that
+// carry a secret in the path, which must never reach a log line.
+func Log(logger *slog.Logger, redact func(path string) string) func(http.Handler) http.Handler {
+	if redact == nil {
+		redact = func(path string) string { return path }
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			started := time.Now()
@@ -28,7 +34,7 @@ func Log(logger *slog.Logger) func(http.Handler) http.Handler {
 			}
 			logger.LogAttrs(r.Context(), level, "request",
 				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
+				slog.String("path", redact(r.URL.Path)),
 				slog.Int("status", rec.status),
 				slog.Duration("took", time.Since(started).Round(time.Millisecond)),
 			)

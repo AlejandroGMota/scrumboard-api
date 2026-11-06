@@ -22,6 +22,13 @@ services:
       DB_PATH: /data/scrumboard.db
       CORS_ORIGIN: https://scrumboard.alejandrogmota.com
 
+      # The remote MCP connector for Claude (README, "MCP server for Claude").
+      # Off while the secret is empty. All three live in .env with the token:
+      # the secret is a credential, and the board ids are nobody's business.
+      SCRUMBOARD_MCP_SECRET: ${SCRUMBOARD_MCP_SECRET:-}
+      SCRUMBOARD_MCP_BOARDS: ${SCRUMBOARD_MCP_BOARDS:-}
+      SCRUMBOARD_MCP_DEFAULT_BOARD: ${SCRUMBOARD_MCP_DEFAULT_BOARD:-}
+
     volumes:
       - sqlite_data:/data
       # Where backup.sh writes the nightly snapshot. A bind mount rather than

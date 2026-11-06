@@ -17,6 +17,7 @@ import (
 	"time"
 
 	adapterhttp "github.com/alejandrogmota/scrumboard-api/internal/adapter/in/http"
+	"github.com/alejandrogmota/scrumboard-api/internal/adapter/in/mcp"
 	"github.com/alejandrogmota/scrumboard-api/internal/adapter/in/ws"
 	"github.com/alejandrogmota/scrumboard-api/internal/adapter/out/broadcast"
 	"github.com/alejandrogmota/scrumboard-api/internal/adapter/out/sqlite"
@@ -28,6 +29,26 @@ import (
 
 // Token is the shared token every test client sends.
 const Token = "test-token-0123456789"
+
+// MCPSecret is the path secret of the test environment's MCP connector.
+const MCPSecret = "test-mcp-secret-0123456789abcdef" // gitleaks:allow (a test value)
+
+// Option adjusts the environment NewEnv boots.
+type Option func(*options)
+
+type options struct {
+	mcpBoards       []string
+	mcpDefaultBoard string
+}
+
+// WithMCPScope limits the MCP connector to these boards, with def as the
+// board add_card falls back to. Without it the connector sees every board.
+func WithMCPScope(boards []string, def string) Option {
+	return func(o *options) {
+		o.mcpBoards = boards
+		o.mcpDefaultBoard = def
+	}
+}
 
 // Env is one test's whole world: a client with the token already set, the
 // events that were published, a clock the test controls, and the database
@@ -63,8 +84,13 @@ func (ps publishers) Publish(ctx context.Context, e domain.Event) {
 // Shutdown and file removal register with t.Cleanup, so tests clean nothing
 // up, and every test starts from its own empty database — which is what makes
 // t.Parallel() safe here (01-structure.md §1.7).
-func NewEnv(t *testing.T) *Env {
+func NewEnv(t *testing.T, opts ...Option) *Env {
 	t.Helper()
+
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 
 	ctx := context.Background()
 	db, err := sqlite.Open(ctx, t.TempDir()+"/scrumboard.db")
@@ -99,6 +125,16 @@ func NewEnv(t *testing.T) *Env {
 		IDs:   ids,
 	}
 
+	// The connector is wired the way main wires it: through a loopback that
+	// learns the router's handler once the router exists.
+	loopback := &mcp.Loopback{Token: Token}
+	mcpServer := mcp.NewServer(mcp.Options{
+		Caller:       loopback,
+		Boards:       o.mcpBoards,
+		DefaultBoard: o.mcpDefaultBoard,
+		Logger:       slog.New(slog.DiscardHandler),
+	})
+
 	srv := adapterhttp.New(adapterhttp.Deps{
 		Boards:  service.NewBoard(deps),
 		Columns: service.NewColumn(deps),
@@ -106,6 +142,7 @@ func NewEnv(t *testing.T) *Env {
 		Sync:    service.NewSync(deps),
 		Health:  func(r *nethttp.Request) error { return db.Ping(r.Context()) },
 		WS:      ws.NewHandler(hub, Token, slog.New(slog.DiscardHandler)),
+		MCP:     mcp.NewHandler(MCPSecret, mcpServer),
 		// Discard: a passing test should print nothing, and a failing one
 		// says what went wrong through its assertions.
 		Logger:         slog.New(slog.DiscardHandler),
@@ -114,7 +151,8 @@ func NewEnv(t *testing.T) *Env {
 		RequestTimeout: 5 * time.Second,
 	})
 
-	ts := httptest.NewServer(srv.Handler())
+	loopback.Handler = srv.Handler()
+	ts := httptest.NewServer(loopback.Handler)
 	t.Cleanup(ts.Close)
 
 	return &Env{

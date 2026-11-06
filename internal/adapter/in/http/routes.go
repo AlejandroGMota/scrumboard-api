@@ -15,6 +15,11 @@ type Route struct {
 	// WebSocket connection, so the token travels as a query parameter and is
 	// checked during the upgrade.
 	Handshake bool
+	// Secret marks a route that authenticates itself by a secret in its own
+	// path, for a client whose whole configuration is one URL: the remote MCP
+	// connector. A wrong secret answers 404, and the request log records the
+	// pattern instead of the path, so the secret is never written down.
+	Secret bool
 }
 
 // Pattern renders the route as a Go 1.22 ServeMux pattern.
@@ -46,6 +51,9 @@ var Routes = []Route{
 	{Method: "PUT", Path: "/api/cards/{id}/move"},
 
 	{Method: "POST", Path: "/api/sync"},
+
+	// Under /api so nginx's existing location and rate limit cover it.
+	{Method: "POST", Path: "/api/mcp/{secret}", Secret: true},
 
 	{Method: "GET", Path: "/ws", Handshake: true},
 }
