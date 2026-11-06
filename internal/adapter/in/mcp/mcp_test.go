@@ -360,3 +360,153 @@ func TestCreateBoard(t *testing.T) {
 		t.Errorf("create_board = %s", out)
 	}
 }
+
+func TestColumnsByName(t *testing.T) {
+	t.Parallel()
+
+	env := testutil.NewEnv(t)
+	cols := seedBoard(t, env, "b-work", "Xeleva · Activo", "Por hacer", "Hecho")
+	env.SeedCard(t, cols[0], "Revisar PR")
+
+	t.Run("create_column appends to the right", func(t *testing.T) {
+		t.Parallel()
+
+		out := mustCall(t, env, "create_column", map[string]any{"board": "xeleva activo", "name": "Esperando a alguien"})
+		if !strings.Contains(out, `"Esperando a alguien"`) {
+			t.Errorf("create_column = %s", out)
+		}
+		order := env.ColumnOrder(t, "b-work")
+		if len(order) != 3 || order[0] != cols[0] || order[1] != cols[1] {
+			t.Errorf("column order = %v", order)
+		}
+	})
+
+	t.Run("create_column works on a board with no columns yet", func(t *testing.T) {
+		t.Parallel()
+
+		seedBoard(t, env, "b-empty", "Vacío")
+		mustCall(t, env, "create_column", map[string]any{"board": "vacio", "name": "Activos"})
+		if got := env.ColumnOrder(t, "b-empty"); len(got) != 1 {
+			t.Errorf("columns = %v", got)
+		}
+	})
+
+	t.Run("rename_column keeps its cards", func(t *testing.T) {
+		t.Parallel()
+
+		out := mustCall(t, env, "rename_column", map[string]any{"board": "xeleva", "column": "por hacer", "name": "Pendiente"})
+		if !strings.Contains(out, `"Pendiente"`) {
+			t.Errorf("rename_column = %s", out)
+		}
+		if got := env.CardTitlesIn(t, cols[0]); !slices.Equal(got, []string{"Revisar PR"}) {
+			t.Errorf("the renamed column holds %v", got)
+		}
+	})
+}
+
+func TestSearchCards(t *testing.T) {
+	t.Parallel()
+
+	env := testutil.NewEnv(t)
+	day := seedBoard(t, env, "b-day", "Día a día", "Hoy", "Hecho")
+	work := seedBoard(t, env, "b-work", "Work", "Todo")
+	env.Client.POST("/api/columns/"+day[0]+"/cards", map[string]any{
+		"id": "c-vidrio", "title": "Vidrio de la ventana",
+		"description": "- [ ] Cotizar el vidrio\n- [ ] Llevar el marco",
+	}).ExpectStatus(http.StatusCreated)
+	env.SeedCard(t, day[1], "Lavar trastes")
+	env.SeedCard(t, work[0], "Cotización Vokaru")
+
+	type result struct {
+		Matches []struct {
+			Board   string `json:"board"`
+			Column  string `json:"column"`
+			CardID  string `json:"card_id"`
+			Excerpt string `json:"excerpt"`
+		} `json:"matches"`
+		Total int `json:"total"`
+	}
+	search := func(t *testing.T, args map[string]any) result {
+		t.Helper()
+		out := mustCall(t, env, "search_cards", args)
+		var r result
+		if err := json.Unmarshal([]byte(out), &r); err != nil {
+			t.Fatalf("decoding %s: %v", out, err)
+		}
+		return r
+	}
+
+	t.Run("every word, in title or description, regardless of accents", func(t *testing.T) {
+		t.Parallel()
+
+		r := search(t, map[string]any{"query": "COTIZAR ventana"})
+		if r.Total != 1 || r.Matches[0].CardID != "c-vidrio" || r.Matches[0].Column != "Hoy" {
+			t.Fatalf("search = %+v", r)
+		}
+		if r.Matches[0].Excerpt != "- [ ] Cotizar el vidrio" {
+			t.Errorf("excerpt = %q", r.Matches[0].Excerpt)
+		}
+	})
+
+	t.Run("across boards, or within one", func(t *testing.T) {
+		t.Parallel()
+
+		if r := search(t, map[string]any{"query": "cotiza"}); r.Total != 2 {
+			t.Errorf("every board: %+v", r)
+		}
+		if r := search(t, map[string]any{"query": "cotiza", "board": "work"}); r.Total != 1 || r.Matches[0].Board != "Work" {
+			t.Errorf("Work only: %+v", r)
+		}
+	})
+
+	t.Run("an empty query is an error", func(t *testing.T) {
+		t.Parallel()
+
+		if text, isErr := call(t, env, "search_cards", map[string]any{"query": "   "}); !isErr {
+			t.Errorf("want an error, got %s", text)
+		}
+	})
+}
+
+func TestScopeCoversColumnsAndSearch(t *testing.T) {
+	t.Parallel()
+
+	env := testutil.NewEnv(t, testutil.WithMCPScope([]string{"b-day"}, "b-day"))
+	seedBoard(t, env, "b-day", "Día a día", "Hoy")
+	work := seedBoard(t, env, "b-work", "Work", "Todo")
+	env.SeedCard(t, work[0], "Client notes")
+
+	t.Run("search skips boards outside the list", func(t *testing.T) {
+		t.Parallel()
+
+		if out := mustCall(t, env, "search_cards", map[string]any{"query": "client"}); !strings.Contains(out, `"total":0`) {
+			t.Errorf("search_cards = %s", out)
+		}
+	})
+
+	t.Run("columns outside the list cannot be created or renamed", func(t *testing.T) {
+		t.Parallel()
+
+		for name, args := range map[string]map[string]any{
+			"create_column": {"board": "Work", "name": "x"},
+			"rename_column": {"board": "Work", "column": "Todo", "name": "x"},
+			"search_cards":  {"board": "Work", "query": "client"},
+		} {
+			if text, isErr := call(t, env, name, args); !isErr {
+				t.Errorf("%s: want an error, got %s", name, text)
+			}
+		}
+		if got := env.ColumnOrder(t, "b-work"); len(got) != 1 {
+			t.Errorf("Work has columns %v", got)
+		}
+	})
+
+	t.Run("without a board, create_column uses the default", func(t *testing.T) {
+		t.Parallel()
+
+		mustCall(t, env, "create_column", map[string]any{"name": "Hecho"})
+		if got := env.ColumnOrder(t, "b-day"); len(got) != 2 {
+			t.Errorf("Día a día has columns %v", got)
+		}
+	})
+}

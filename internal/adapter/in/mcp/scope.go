@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // The slice of a board the tools need to find things by name or by id.
@@ -25,7 +26,9 @@ type columnView struct {
 }
 
 type cardView struct {
-	ID string `json:"id"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
 }
 
 func (s *Server) restricted() bool { return s.boards != nil }
@@ -138,20 +141,19 @@ func (s *Server) checkCard(ctx context.Context, id string) error {
 	return notFound("card", id)
 }
 
-// resolve finds a column by the names a person would say out loud. An empty
-// board name means the default board (or the only one there is); an empty
-// column name means the board's first column.
-func (s *Server) resolve(ctx context.Context, boardName, columnName string) (boardView, columnView, error) {
+// resolveBoard finds a board by the name a person would say out loud. An
+// empty name means the default board, or the only one there is.
+func (s *Server) resolveBoard(ctx context.Context, boardName string) (boardView, error) {
 	var boardID string
 	switch {
 	case boardName != "":
 		_, boards, err := s.visibleBoards(ctx)
 		if err != nil {
-			return boardView{}, columnView{}, err
+			return boardView{}, err
 		}
 		b, err := pick("board", boardName, boards, func(b boardView) string { return b.Name })
 		if err != nil {
-			return boardView{}, columnView{}, err
+			return boardView{}, err
 		}
 		boardID = b.ID
 	case s.defaultBoard != "":
@@ -159,16 +161,23 @@ func (s *Server) resolve(ctx context.Context, boardName, columnName string) (boa
 	default:
 		_, boards, err := s.visibleBoards(ctx)
 		if err != nil {
-			return boardView{}, columnView{}, err
+			return boardView{}, err
 		}
 		if len(boards) != 1 {
-			return boardView{}, columnView{}, fmt.Errorf("no default board is configured, so name one; the boards are: %s",
+			return boardView{}, fmt.Errorf("no default board is configured, so name one; the boards are: %s",
 				names(boards, func(b boardView) string { return b.Name }))
 		}
 		boardID = boards[0].ID
 	}
 
 	b, _, err := s.board(ctx, boardID)
+	return b, err
+}
+
+// resolve finds a column by name on a board found by resolveBoard. An empty
+// column name means the board's first column.
+func (s *Server) resolve(ctx context.Context, boardName, columnName string) (boardView, columnView, error) {
+	b, err := s.resolveBoard(ctx, boardName)
 	if err != nil {
 		return boardView{}, columnView{}, err
 	}
@@ -183,6 +192,26 @@ func (s *Server) resolve(ctx context.Context, boardName, columnName string) (boa
 		return boardView{}, columnView{}, err
 	}
 	return b, c, nil
+}
+
+// readableBoards reads every board the tools may touch, cards included.
+func (s *Server) readableBoards(ctx context.Context) ([]boardView, error) {
+	if s.restricted() {
+		return s.scopeBoards(ctx)
+	}
+	_, list, err := s.visibleBoards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]boardView, 0, len(list))
+	for _, b := range list {
+		v, _, err := s.board(ctx, b.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 // pick matches a spoken name: an exact match after folding wins, then a
@@ -231,7 +260,15 @@ var accents = strings.NewReplacer(
 	"ñ", "n", "ç", "c",
 )
 
-// fold makes "Día a día" and "dia  a dia" the same name.
+// fold makes "Día a día" and "dia  a dia" the same name, and "Xeleva ·
+// Activo" the same as "xeleva activo": anything but a letter or a digit
+// separates words, so separators and emoji never have to be typed.
 func fold(s string) string {
-	return strings.Join(strings.Fields(accents.Replace(strings.ToLower(s))), " ")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return ' '
+	}, accents.Replace(strings.ToLower(s)))
+	return strings.Join(strings.Fields(s), " ")
 }
