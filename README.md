@@ -149,8 +149,18 @@ MIT. See [LICENSE](LICENSE).
 
 ## MCP server for Claude
 
-`cmd/mcp` is a stdio MCP server that wraps this API, so Claude can list boards,
-read them, and create, edit, move and delete cards. Stdlib only, one binary.
+The tools live in `internal/adapter/in/mcp` and are served two ways. Both drive
+the same HTTP API the browser uses, so validation, WIP limits and the live sync
+apply to Claude exactly as they do to a person.
+
+Tools: `list_boards`, `get_board`, `list_labels`, `add_card` (by board and
+column name, accents and case ignored), `create_card`, `update_card`,
+`move_card`, `delete_card`, `clear_column`, and `create_board` (only with access
+to every board).
+
+### Over stdio, for Claude Code
+
+`cmd/mcp` calls the deployed API with the token. Stdlib only, one binary.
 
 ```sh
 go build -o ~/bin/scrumboard-mcp ./cmd/mcp
@@ -159,5 +169,25 @@ claude mcp add scrumboard --scope user \
   -e SCRUMBOARD_TOKEN=<token> -- ~/bin/scrumboard-mcp
 ```
 
-Tools: `list_boards`, `get_board`, `list_labels`, `create_card`, `update_card`,
-`move_card`, `delete_card`.
+`SCRUMBOARD_MCP_BOARDS` and `SCRUMBOARD_MCP_DEFAULT_BOARD` (below) work here
+too, and are optional.
+
+### Over HTTP, for claude.ai and its phone app
+
+The API serves the connector at `POST /api/mcp/{secret}` (Streamable HTTP,
+stateless, JSON answers). claude.ai configures a remote server with nothing but
+a URL, so the secret in the path is the only credential: a wrong one answers
+404, and the request log records `/api/mcp/{secret}`, never the value. It is
+off unless the secret is set. In `~/scrumboard-api/.env` on the VM:
+
+```sh
+SCRUMBOARD_MCP_SECRET=<openssl rand -hex 32>     # not the API token
+SCRUMBOARD_MCP_BOARDS=<board id>,<board id>       # or * for every board; required
+SCRUMBOARD_MCP_DEFAULT_BOARD=<board id>           # optional: where add_card goes with no board
+```
+
+A board outside the list answers like one that does not exist. Then, in
+claude.ai → Settings → Connectors → Add custom connector, the URL is
+`https://scrumboard.alejandrogmota.com/api/mcp/<secret>`. Rotating the secret
+means editing `.env`, `docker compose --env-file .env up -d`, and updating
+the connector.

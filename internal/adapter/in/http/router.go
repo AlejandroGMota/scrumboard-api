@@ -5,6 +5,7 @@ package http
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alejandrogmota/scrumboard-api/internal/adapter/in/http/middleware"
@@ -27,6 +28,10 @@ type Deps struct {
 	// WS is the WebSocket upgrade handler. Nil until step 4 of the build
 	// order, and the route simply is not registered while it is.
 	WS http.Handler
+
+	// MCP is the remote connector for Claude. Nil unless it is configured,
+	// and the route is not registered while it is.
+	MCP http.Handler
 
 	Logger         *slog.Logger
 	Token          string
@@ -73,6 +78,10 @@ func New(d Deps) *Server {
 
 	s.handle("POST", "/api/sync", s.sync)
 
+	if d.MCP != nil {
+		s.handle("POST", "/api/mcp/{secret}", d.MCP.ServeHTTP)
+	}
+
 	if d.WS != nil {
 		s.handle("GET", "/ws", d.WS.ServeHTTP)
 	}
@@ -100,7 +109,7 @@ func (s *Server) handle(method, path string, h http.HandlerFunc) {
 		// meant to stay open, and TimeoutHandler would cut it.
 		handler = http.TimeoutHandler(handler, s.deps.RequestTimeout, `{"error":{"code":"timeout","message":"the request took too long"}}`)
 	}
-	if !route.Public && !route.Handshake {
+	if !route.Public && !route.Handshake && !route.Secret {
 		handler = middleware.Auth(s.deps.Token)(handler)
 	}
 
@@ -118,7 +127,22 @@ func (s *Server) Registered() []Route {
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
 	h = middleware.CORS(s.deps.CORSOrigin)(h)
-	h = middleware.Log(s.logger)(h)
+	h = middleware.Log(s.logger, s.redact)(h)
 	h = middleware.Recover(s.logger)(h)
 	return h
+}
+
+// redact replaces the path of a request to a Secret route with the route's
+// pattern, so the log line says /api/mcp/{secret} and nothing more.
+func (s *Server) redact(path string) string {
+	for _, r := range s.registered {
+		if !r.Secret {
+			continue
+		}
+		prefix, _, _ := strings.Cut(r.Path, "{")
+		if strings.HasPrefix(path, prefix) {
+			return r.Path
+		}
+	}
+	return path
 }

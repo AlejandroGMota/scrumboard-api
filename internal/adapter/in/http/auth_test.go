@@ -27,7 +27,8 @@ func TestEveryRouteRequiresAuth(t *testing.T) {
 	env := testutil.NewEnv(t)
 
 	for _, route := range adapterhttp.Routes {
-		if route.Public || route.Handshake {
+		// Secret routes authenticate by their path; the MCP tests cover them.
+		if route.Public || route.Handshake || route.Secret {
 			continue
 		}
 		t.Run(route.Method+" "+route.Path, func(t *testing.T) {
@@ -159,9 +160,9 @@ func TestRouteTableMatchesRouter(t *testing.T) {
 	}
 
 	for pattern, route := range declared {
-		// The WebSocket route is only registered once its adapter is wired in,
-		// which the endpoint tests do not do.
-		if route.Handshake {
+		// The WebSocket and MCP routes are only registered once their adapters
+		// are wired in, which this router is not.
+		if route.Handshake || route.Secret {
 			continue
 		}
 		if !seen[pattern] {

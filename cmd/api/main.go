@@ -16,6 +16,7 @@ import (
 
 	"github.com/alejandrogmota/scrumboard-api/config"
 	adapterhttp "github.com/alejandrogmota/scrumboard-api/internal/adapter/in/http"
+	"github.com/alejandrogmota/scrumboard-api/internal/adapter/in/mcp"
 	"github.com/alejandrogmota/scrumboard-api/internal/adapter/in/ws"
 	"github.com/alejandrogmota/scrumboard-api/internal/adapter/out/broadcast"
 	"github.com/alejandrogmota/scrumboard-api/internal/adapter/out/clock"
@@ -92,6 +93,20 @@ func run() error {
 		IDs:     idgen.New(),
 	}
 
+	// The remote connector calls the API it is mounted in, through the same
+	// handler a browser reaches. The loopback learns that handler once the
+	// router exists, which is after the connector has to be handed to it.
+	var mcpHandler http.Handler
+	loopback := &mcp.Loopback{Token: cfg.Token}
+	if cfg.MCP.Secret != "" {
+		mcpHandler = mcp.NewHandler(cfg.MCP.Secret, mcp.NewServer(mcp.Options{
+			Caller:       loopback,
+			Boards:       cfg.MCP.Boards,
+			DefaultBoard: cfg.MCP.DefaultBoard,
+			Logger:       logger,
+		}))
+	}
+
 	api := adapterhttp.New(adapterhttp.Deps{
 		Boards:  service.NewBoard(deps),
 		Columns: service.NewColumn(deps),
@@ -99,12 +114,14 @@ func run() error {
 		Sync:    service.NewSync(deps),
 		Health:  func(r *http.Request) error { return db.Ping(r.Context()) },
 		WS:      ws.NewHandler(hub, cfg.Token, logger),
+		MCP:     mcpHandler,
 
 		Logger:         logger,
 		Token:          cfg.Token,
 		CORSOrigin:     cfg.CORSOrigin,
 		RequestTimeout: cfg.RequestTimeout,
 	})
+	loopback.Handler = api.Handler()
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -127,6 +144,7 @@ func run() error {
 	logger.Info("listening",
 		slog.String("addr", listener.Addr().String()),
 		slog.String("cors_origin", cfg.CORSOrigin),
+		slog.Bool("mcp", cfg.MCP.Secret != ""),
 	)
 
 	serverErr := make(chan error, 1)
