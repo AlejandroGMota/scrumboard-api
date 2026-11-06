@@ -155,8 +155,11 @@ apply to Claude exactly as they do to a person.
 
 Tools: `list_boards`, `get_board`, `list_labels`, `add_card` (by board and
 column name, accents and case ignored), `create_card`, `update_card`,
-`move_card`, `delete_card`, `clear_column`, and `create_board` (only with access
-to every board).
+`move_card`, `delete_card`, `clear_column`, `create_column` and `rename_column`
+(by board and column name), `search_cards` (every word of the query in a card's
+title or description, at most 30 results), and `create_board` (only with access
+to every board). Names ignore case, accents, punctuation and emoji, so
+"xeleva activo" finds "Xeleva · Activo".
 
 ### Over stdio, for Claude Code
 

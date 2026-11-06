@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -249,6 +250,93 @@ var allTools = []tool{
 		},
 	},
 	{
+		Name:        "create_column",
+		Description: "Add a column at the right end of a board, by board name.",
+		InputSchema: obj([]string{"name"}, map[string]any{
+			"name":  str("Column name"),
+			"board": str("Board name; omit for the default board"),
+		}),
+		run: func(ctx context.Context, s *Server, a args) (json.RawMessage, error) {
+			name, err := a.required("name")
+			if err != nil {
+				return nil, err
+			}
+			b, err := s.resolveBoard(ctx, a.optional("board"))
+			if err != nil {
+				return nil, err
+			}
+			id, err := newID()
+			if err != nil {
+				return nil, err
+			}
+			col, err := s.caller.Call(ctx, "POST", "/api/boards/"+url.PathEscape(b.ID)+"/columns",
+				map[string]string{"id": id, "name": name})
+			if err != nil {
+				return nil, err
+			}
+			return marshal(map[string]any{"board": b.Name, "column": col})
+		},
+	},
+	{
+		Name:        "rename_column",
+		Description: "Rename a column, found by board and column name. Its cards stay where they are.",
+		InputSchema: obj([]string{"column", "name"}, map[string]any{
+			"column": str("Current column name"),
+			"name":   str("New column name"),
+			"board":  str("Board name; omit for the default board"),
+		}),
+		run: func(ctx context.Context, s *Server, a args) (json.RawMessage, error) {
+			column, err := a.required("column")
+			if err != nil {
+				return nil, err
+			}
+			name, err := a.required("name")
+			if err != nil {
+				return nil, err
+			}
+			b, c, err := s.resolve(ctx, a.optional("board"), column)
+			if err != nil {
+				return nil, err
+			}
+			col, err := s.caller.Call(ctx, "PATCH", "/api/columns/"+url.PathEscape(c.ID), map[string]string{"name": name})
+			if err != nil {
+				return nil, err
+			}
+			return marshal(map[string]any{"board": b.Name, "column": col})
+		},
+	},
+	{
+		Name: "search_cards",
+		Description: "Find cards whose title or description holds every word of the query, regardless of case " +
+			"and accents. Answers board, column, card id, title and the first matching description line, " +
+			fmt.Sprintf("at most %d cards. Use it instead of get_board to find one card on a large board.", maxMatches),
+		InputSchema: obj([]string{"query"}, map[string]any{
+			"query": str("Words to look for"),
+			"board": str("Board name to search; omit to search every board"),
+		}),
+		run: func(ctx context.Context, s *Server, a args) (json.RawMessage, error) {
+			query, err := a.required("query")
+			if err != nil {
+				return nil, err
+			}
+			var boards []boardView
+			if name := a.optional("board"); name != "" {
+				b, err := s.resolveBoard(ctx, name)
+				if err != nil {
+					return nil, err
+				}
+				boards = []boardView{b}
+			} else if boards, err = s.readableBoards(ctx); err != nil {
+				return nil, err
+			}
+			matches, total, err := searchCards(boards, query)
+			if err != nil {
+				return nil, err
+			}
+			return marshal(map[string]any{"matches": matches, "total": total, "truncated": total > len(matches)})
+		},
+	},
+	{
 		Name:        "create_board",
 		Description: "Create a board with its columns, left to right.",
 		InputSchema: obj([]string{"name", "columns"}, map[string]any{
@@ -305,4 +393,70 @@ func createCard(ctx context.Context, s *Server, columnID, title, description, la
 	}
 	return s.caller.Call(ctx, "POST", "/api/columns/"+url.PathEscape(columnID)+"/cards",
 		map[string]string{"id": id, "title": title, "description": description, "label": label})
+}
+
+// maxMatches keeps a vague query from answering with half the board.
+const maxMatches = 30
+
+type match struct {
+	Board   string `json:"board"`
+	Column  string `json:"column"`
+	CardID  string `json:"card_id"`
+	Title   string `json:"title"`
+	Excerpt string `json:"excerpt,omitempty"`
+}
+
+// searchCards returns the first maxMatches cards, in board order, whose title
+// and description together hold every word of the query, and how many
+// matched in all.
+func searchCards(boards []boardView, query string) ([]match, int, error) {
+	words := strings.Fields(fold(query))
+	if len(words) == 0 {
+		return nil, 0, fmt.Errorf("missing argument %q", "query")
+	}
+	out := []match{}
+	total := 0
+	for _, b := range boards {
+		for _, c := range b.Columns {
+			for _, card := range c.Cards {
+				text := fold(card.Title + " " + card.Description)
+				if !containsAll(text, words) {
+					continue
+				}
+				total++
+				if len(out) < maxMatches {
+					out = append(out, match{Board: b.Name, Column: c.Name, CardID: card.ID, Title: card.Title,
+						Excerpt: excerpt(card.Description, words)})
+				}
+			}
+		}
+	}
+	return out, total, nil
+}
+
+func containsAll(text string, words []string) bool {
+	for _, w := range words {
+		if !strings.Contains(text, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// excerpt is the first description line holding any of the words, cut to a
+// length that keeps thirty matches readable.
+func excerpt(description string, words []string) string {
+	for _, line := range strings.Split(description, "\n") {
+		f := fold(line)
+		for _, w := range words {
+			if strings.Contains(f, w) {
+				line = strings.TrimSpace(line)
+				if r := []rune(line); len(r) > 200 {
+					line = string(r[:200]) + "…"
+				}
+				return line
+			}
+		}
+	}
+	return ""
 }

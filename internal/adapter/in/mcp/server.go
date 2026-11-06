@@ -22,8 +22,9 @@ var protocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-
 const instructions = "The user's Kanban boards. A to-do the user dictates without naming a board " +
 	"goes to add_card with no board or column: it lands at the end of the default board's first " +
 	"column. Name a board or column only when the user does; names match regardless of case and " +
-	"accents. clear_column deletes every card in a column: first say which column and how many " +
-	"cards it holds, and call it only after the user confirms."
+	"accents. To find one card, use search_cards rather than reading a whole board. clear_column " +
+	"deletes every card in a column: first say which column and how many cards it holds, and call " +
+	"it only after the user confirms."
 
 // Options configure a Server.
 type Options struct {
@@ -139,7 +140,7 @@ func (s *Server) handle(ctx context.Context, req request) (any, *rpcError) {
 		return map[string]any{
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]string{"name": "scrumboard", "version": "1.1.0"},
+			"serverInfo":      map[string]string{"name": "scrumboard", "version": "1.2.0"},
 			"instructions":    instructions,
 		}, nil
 	case "ping":
